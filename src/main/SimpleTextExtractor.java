@@ -19,9 +19,12 @@ import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectInputStream;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
+import com.mongodb.BasicDBObject;
+import com.mongodb.DBCursor;
 import com.mongodb.MongoClient;
 import com.mongodb.MongoClientURI;
 import com.mongodb.ServerAddress;
+import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 
@@ -58,12 +61,40 @@ public class SimpleTextExtractor {
         ObjectListing objectListing = s3.listObjects(new ListObjectsRequest()
                 .withBucketName(POLAR));
         S3Object object = null;
-        
+        Boolean flag = true;
+        FindIterable<Document> cursor = null;
         while(true){
         	for (S3ObjectSummary objectSummary : objectListing.getObjectSummaries()) {
                 //System.out.println(" - " + objectSummary.getKey() + "  " +
                   //      "(size = " + objectSummary.getSize() + ")");
-                object = s3.getObject(new GetObjectRequest(POLAR, objectSummary.getKey()));
+        		totalCount++;
+        		
+        		
+                BasicDBObject query = new BasicDBObject("key",objectSummary.getKey());
+                cursor = collection.find(query);
+                if(cursor.iterator().hasNext()){
+                	//System.out.println("duplicate");
+                	if(flag)
+                	{
+                		flag = false;
+                		System.out.println("***********repeating ");
+                	}
+                	continue;
+                }
+                else{
+                	if(!flag)
+                	{
+                		flag = true;
+                		System.out.println("not repeating "+totalCount);
+                	}
+                }
+                try{
+                    object = s3.getObject(new GetObjectRequest(POLAR, objectSummary.getKey()));
+            		}
+            		catch(Exception e){
+            			System.out.println("total count "+totalCount);
+            			return;
+            		}
                 Document doc = new Document("key",objectSummary.getKey());
                 S3ObjectInputStream inputStream = object.getObjectContent();
                 doc.append("type", tika.detect(inputStream));
@@ -71,13 +102,15 @@ public class SimpleTextExtractor {
 //                System.out.println("Content-Type: "  + doc.toJson());
                 collection.insertOne(doc);
                 inputStream.close();
-                totalCount++;
+                
             }
         	
         	if(objectListing.isTruncated()){
+        		System.out.println("Going for the next batch.");
         		objectListing = s3.listNextBatchOfObjects(objectListing);
         	}
         	else{
+        		System.out.println("Last batch ended");
         		break;
         	}
         }
